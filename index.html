@@ -98,9 +98,9 @@
   </section>
 
   <section>
-    <h2>Breaking consensus, including my own</h2>
+    <h2>Breaking consensus and custody</h2>
     <p class="when">ongoing · security research</p>
-    <p>Designing consensus taught me where it breaks, so I look for those breaks in other chains. On Aptos I found a high-severity consensus bug that could halt the network and received a $30,000 bounty. On Sui I've reported denial-of-service issues, several reachable by anyone on the network. I hold my own work to the same standard: a manual audit of Zex's custody stack turned up 17 findings, several of them critical.</p>
+    <p>Designing consensus taught me where it breaks, so I look for those breaks in other chains. On Aptos I found a high-severity consensus bug that could halt the network and received a $30,000 bounty. On Sui I've reported denial-of-service issues, several reachable by anyone on the network. After I stepped back at Zex, a new team built the custody service on my design, and I audited their implementation by hand: 17 findings, several of them critical.</p>
   </section>
 
   <hr>
@@ -112,7 +112,6 @@
       <li>Never trust a single path: use a threshold of signers, collateral at stake, or a second key.</li>
       <li>Keep the trusted part small enough to verify.</li>
       <li>Build your own version to learn, then ship on audited, production-tested parts.</li>
-      <li>Don't trust your own numbers until something independent confirms them.</li>
     </ol>
   </section>
 
