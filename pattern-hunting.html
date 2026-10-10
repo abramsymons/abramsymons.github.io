@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="Mahdi Heydari on a method for finding consensus and networking bugs in large codebases you don't write in: mine the fix history for recurring bug shapes, then make the model distrust its own 'safe'.">
+<title>Hunting Protocol Bugs by Reading the Fixes First</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Instrument+Sans:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* Layout: a plain essay in one reading column of about 65 characters. Matches the style of the "Ordering Before Execution" page. */
+  :root {
+    --bg: #f3f5f6;
+    --paper: #ffffff;
+    --ink: #17212b;
+    --muted: #5d6a76;
+    --rule: #d6dce2;
+    --accent: #0f6b66;
+    --font-display: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+    --font-body: "Literata", Georgia, "Times New Roman", serif;
+    --font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #0c1116; --paper: #121a21; --ink: #e2e8ed; --muted: #95a3b0; --rule: #26313b; --accent: #5cc8bf; color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --bg: #0c1116; --paper: #121a21; --ink: #e2e8ed; --muted: #95a3b0; --rule: #26313b; --accent: #5cc8bf; color-scheme: dark; }
+
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font: 18px/1.75 var(--font-body); padding-inline: 16px; padding-block: 40px 64px; }
+  .page { max-width: 46rem; margin: 0 auto; background: var(--paper); border: 1px solid var(--rule); border-radius: 6px; padding-block: clamp(32px, 6vw, 64px); padding-inline: clamp(20px, 6vw, 64px); display: grid; gap: 44px; }
+  section { display: grid; gap: 16px; }
+  p { margin: 0; }
+  .eyebrow { font: 500 12px/1.4 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); }
+  h1 { font: 700 clamp(2.1rem, 5.5vw, 3rem)/1.06 var(--font-display); letter-spacing: -0.03em; margin: 0; text-wrap: balance; }
+  h2 { font: 600 1.45rem/1.25 var(--font-display); letter-spacing: -0.01em; margin: 0; text-wrap: balance; }
+  .lede { font-size: 1.12em; font-style: italic; color: var(--muted); }
+  hr { border: 0; border-top: 1px solid var(--rule); margin: 0; }
+  ul { margin: 0; padding-left: 1.3em; display: grid; gap: 12px; }
+  li::marker { color: var(--accent); }
+  blockquote { margin: 0; padding: 2px 0 2px 20px; border-left: 3px solid var(--accent); font: 600 1.08em/1.5 var(--font-display); color: var(--ink); letter-spacing: -0.01em; }
+  a { color: var(--accent); text-underline-offset: 3px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .contact { font: 14px/1.6 var(--font-mono); color: var(--muted); }
+  @media (max-width: 600px) { body { font-size: 17px; } }
+</style>
+</head>
+
+<main class="page">
+  <section>
+    <p class="eyebrow">Mahdi Heydari · <a href="./">Ordering Before Execution</a></p>
+    <h1>Hunting Protocol Bugs by Reading the Fixes First</h1>
+    <p class="lede">A method for finding consensus and networking bugs in large codebases you don't write in — and a note on what stays valuable when the machine reads faster than you.</p>
+  </section>
+
+  <hr>
+
+  <section>
+    <h2>The thing that changed</h2>
+    <p>For most of my career, finding a bug meant reading code until something looked wrong. The scarce resource was attention: there is always more code than one person can read carefully, so you pick a corner and hope you picked the right one.</p>
+    <p>That resource stopped being scarce. A model can now read a function and tell you what it does faster than I can, in a language I don't write. My first instinct was that this made my skill worthless. The truth is the opposite. When mechanical reading becomes free, the value moves to the two things the machine is still bad at: knowing <em>where</em> to point it, and refusing to believe it when it says "this is safe."</p>
+    <p>This is the method I built around that. It has found real, remotely-triggerable denial-of-service, resource-exhaustion, and state-divergence bugs in several large Rust blockchain codebases. The findings aren't the point — most are universal anyway. The method is.</p>
+  </section>
+
+  <section>
+    <h2>The insight: the fix history is a map</h2>
+    <p>I don't start from my own intuition about where bugs live. I start from the project's own commit history. Every serious codebase is constantly fixing bugs, and each fix is a confession: <em>here is a place we got it wrong.</em> Read enough confessions and you stop seeing individual bugs and start seeing <em>shapes</em> — the same mistake, made independently, in unrelated files, over years.</p>
+    <p>So the first phase is archaeology. Take a window of history — the last few months, or a year for a first pass — and read every non-merge commit's full diff. Not the messages; the diffs. Classify each: feature, refactor, docs, or a <em>fix</em> for something that could crash, hang, exhaust a resource, or make two honest nodes disagree. In one large codebase that meant reading over a thousand commits, roughly a sixth of them security-relevant. This is exactly the work that was impossible by hand and is now cheap: split the commits into batches, have a fleet of readers classify every diff against a written rubric, collect the relevant ones.</p>
+    <p>Reading every diff beats a clever keyword search, for two reasons. The obvious one: a keyword filter throws away every case that doesn't use the obvious word. The important one: maintainers often fix a security bug quietly, worded as a refactor or a "small fix," with nothing in the message a search could catch — sometimes to avoid advertising the hole before the fix rolls out, sometimes just habit. The only place the truth is written is the diff. Both reasons are only affordable now because reading is cheap.</p>
+  </section>
+
+  <section>
+    <h2>Distilling shapes, ranked by recurrence and severity</h2>
+    <p>A list of five hundred fixes is not useful. Collapse them into abstract <em>shapes</em>, described without the codebase's specific types, ranked by how many independent times each recurred <em>and</em> how bad it is when it bites.</p>
+    <p>Recurrence is the thesis. A mistake fixed once is a bug. A mistake made ten times independently, across unrelated subsystems, is a pattern — and a pattern that recurred ten times in one codebase is almost certainly sitting unfixed in the next codebase with the same architecture. Severity is the second axis, because a shape that recurs constantly but only logs a warning is not worth a shape that halts the network.</p>
+    <p>It helps to keep three failure kinds separate rather than lumping them as "crashes": a <strong>crash</strong> (a node panics and dies), <strong>resource exhaustion</strong> (memory, disk, or a queue grows unbounded until the node falls over later), and <strong>divergence</strong> (no crash at all, but two honest nodes compute different bytes from the same input — the quiet, dangerous one, because it attacks consensus itself).</p>
+    <p>The shapes that recur most, everywhere, are mundane: unbounded channels, queues, and caches fed by the network and never revisited; blocking or panicking sends inside a consensus-critical loop; assertions on attacker-controllable conditions; expensive work done before the cheap rejection check; resource limits never reconciled with the host's real provisioning; aggregate-signature gaps; metering charged by a cheap-to-measure proxy instead of the thing that actually costs. Underneath most of them is one meta-shape: <strong>trust delegated across a boundary by a comment.</strong> One layer assumes another already validated something — "the caller checks this" — and the assumption lives in a comment, not in code. Sometimes it holds. Sometimes it doesn't, and that is the bug. A comment is a claim, never evidence.</p>
+  </section>
+
+  <section>
+    <h2>Hunting a new codebase</h2>
+    <p>With a ranked catalog, hunting a new system is translation. Map the target's real structure first, and treat every guess about "the equivalent of X is probably Y" as a hint to verify — in practice every one of my first guesses needed correcting once I opened the source. Then hunt one shape at a time, highest-recurrence first, and stop after each. I tried running patterns in parallel once; it was faster and worse, because nobody was watching any single thread closely enough to catch a soft verdict. One at a time, deliberately slow. Depth over throughput.</p>
+  </section>
+
+  <section>
+    <h2>The part only I can do: distrusting "safe"</h2>
+    <p>This is where the method lives or dies, and it does not get cheaper as models improve. When a model reads a suspicious function and concludes "safe because X," it is right often enough to be dangerous — wrong in a confident, well-written sentence that is easy to accept. Nearly every "safe" verdict I went back and <em>challenged</em> needed correcting. Not some. Nearly every one.</p>
+    <p>They failed the same two ways. <strong>Generalizing from one example:</strong> the model checked one caller and the sentence quietly became "every caller." Once, a verdict rested on "around fourteen setters, every one validates." Forced to actually enumerate them, it was nineteen, and five didn't validate — that gap was the bug. <strong>Trusting a comment instead of traced code:</strong> a closing argument sourced from a comment, a prior write-up, or the model's own earlier summary, never from code read this session.</p>
+    <p>The best trick I have is almost absurdly simple: tell the model to challenge its own reasoning. The same model that just wrote a confident "safe" will, asked to attack its own verdict, often find the hole itself within minutes. It won't do this alone — left to itself it defends its first answer — but directed to be its own adversary it is astonishingly effective. And one round often isn't enough: a verdict would survive the first challenge and the second and only crack open on the fourth or fifth, each pass peeling off one more reassuring layer. I'll admit to a trick that shouldn't work as well as it does — now and then I'd say "I'm sure there's a problem here" when I had no idea whether there was. More than once, after several rounds of being pushed as if a bug were definitely there, one that was definitely there surfaced. My job is mostly to keep asking, and to know which verdicts are worth asking about.</p>
+    <p>The rest is mechanical: before any "safe" verdict, name the one claim it depends on and test it against those two red flags plus a third — is this just plausibility with no attempted counterexample? Two rules capture the whole discipline:</p>
+    <blockquote>A completeness claim is never a sentence. It's a search, and the search's output is the evidence.</blockquote>
+    <blockquote>Before you write "safe," try to break it.</blockquote>
+    <p>And the belief underneath all of it:</p>
+    <blockquote>Most missed bugs aren't missed because nobody looked. They're missed because someone was sure they'd looked everywhere, and hadn't.</blockquote>
+  </section>
+
+  <section>
+    <h2>Reading proves a mechanism exists. It can't prove it's reachable.</h2>
+    <p>A bug on paper is not a bug. Reading shows a dangerous mechanism exists — an unbounded queue, an unchecked cast. It usually can't show an attacker can reach it at meaningful scale. Those are different claims, and only the second is a finding.</p>
+    <p>So every verdict that looks real gets promoted out of the tracking file into its own followup document, and I open it in a fresh session with no memory of how I convinced myself the first time. This is where most of the challenge rounds actually happen. Finding the candidate is the easy half; the deep read of all the surrounding code, and the four or five rounds of trying to break the reachability claim, belong here, in the followup, not back at the first verdict.</p>
+    <p>Then you build the proof of reachability, and building it is itself the hardest challenge round. Things appear when you write a PoC that no amount of reading surfaced. And the most humbling lesson is how often "not safe" collapses back to safe <em>only</em> at this step: a small unit test makes the bug look real, and then you run it against a real multi-node swarm and the system absorbs it — backpressure, a timeout, a check on another node — in a way the unit test never modeled. A mechanism that is reachable in isolation is not always reachable in a running network. You don't learn which until you build the swarm and try.</p>
+  </section>
+
+  <section>
+    <h2>If you want to try this</h2>
+    <p>The method compresses to a few habits:</p>
+    <ul>
+      <li><strong>Calibrate on the project's own fix history before trusting your intuition.</strong> The diffs tell you which mistakes this codebase actually makes. Read all of them, not the ones with the obvious keyword.</li>
+      <li><strong>Turn fixes into shapes, ranked by recurrence and severity.</strong> A mistake made ten times is a pattern, and patterns travel to the next codebase with the same architecture.</li>
+      <li><strong>Hunt one shape at a time, slowly.</strong> Map the target's real structure first; treat every "the equivalent is probably X" as a guess to verify.</li>
+      <li><strong>Never accept a "safe" you haven't made the model attack.</strong> It won't challenge itself; you have to ask, and often ask several times. Promote each real-looking verdict into its own document and re-derive it in a fresh session.</li>
+      <li><strong>Nothing is a finding until a PoC reaches it.</strong> Reading proves a mechanism exists, not that it's reachable — and a realistic swarm will overturn verdicts a unit test got wrong, in both directions.</li>
+    </ul>
+    <p>Use the model for all of it: the reading, the classification, the tracing, the first verdict — it will often find the flaw in its own reasoning faster than you could, once you make it look. The one step you can't hand off is the decision to stop. Left alone, the model settles on its first comfortable answer; the whole method is a structured refusal to let it settle too early. That refusal is the part that stays yours, and it is enough.</p>
+  </section>
+
+  <hr>
+
+  <section>
+    <p class="contact">Mahdi Heydari · protocol engineer &amp; security researcher · <a href="./">Ordering Before Execution</a> · <a href="resume.pdf">Resume</a> · <a href="https://github.com/abramsymons">github.com/abramsymons</a> · <a href="https://x.com/0xmahdi_">x.com/0xmahdi_</a> · <a href="https://www.linkedin.com/in/abramsymons">linkedin.com/in/abramsymons</a></p>
+  </section>
+</main>
+</html>
